@@ -1,54 +1,22 @@
-"""LLM客户端
-
-走官方``openai``SDK OpenAI兼容协议
-默认指向DeepSeek
-"""
+"""Keep the original JSON parser; delegate model requests to the DSH host."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
-from functools import lru_cache
-
-from openai import AsyncOpenAI
-
-from .config import get_settings, require_api_key
+from .tasks import model_request
 
 logger = logging.getLogger("xagents.llm")
 
 
-@lru_cache(maxsize=1)
-def _client() -> AsyncOpenAI:
-    settings = get_settings()
-    return AsyncOpenAI(
-        api_key=require_api_key(settings),
-        base_url=settings.base_url,
-        timeout=settings.llm_timeout,
-        max_retries=settings.llm_max_retries,
-    )
-
-
 async def aclose() -> None:
-    """关闭底层连接池 服务优雅退出时调用"""
-    if _client.cache_info().currsize:
-        await _client().close()
-        _client.cache_clear()
+    """No provider client lives in Python."""
 
 
 async def complete_json(system: str, user: str) -> object:
     """调用模型并解析出JSON对象 失败（网络/鉴权/格式）时抛异常"""
-    settings = get_settings()
-    response = await _client().chat.completions.create(
-        model=settings.model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    content = response.choices[0].message.content or ""
+    content = await model_request(system, user)
     return _extract_json(content)
 
 

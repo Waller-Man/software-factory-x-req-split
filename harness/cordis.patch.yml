@@ -1,11 +1,5 @@
 - insert:
-    - id: x-dsh-registry
-      # npm包名
+    - id: x-req-split
       name: x-dsh
-      # 传给index和Config
       config:
-        baseUrl: http://127.0.0.1:8077
-        agents:
-          - name: requirements_split
-        pipeline:
-          - requirements_split
+        port: 0

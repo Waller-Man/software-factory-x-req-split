@@ -49,6 +49,7 @@ def convert_docx(source: Path, assets_dir: Path) -> ConversionResult:
                 if reference:
                     references.append(reference)
         for image in paragraph._p.iter(VML_IMAGEDATA):
+            rid = image.get(qn("r:id"))
             if rid:
                 reference = _save_related_image(state, rid, current_section)
                 if reference:

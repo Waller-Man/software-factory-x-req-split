@@ -8,7 +8,10 @@ import mimetypes
 import os
 import re
 import subprocess
+import shutil
 import sys
+import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,8 +38,9 @@ def run_pipeline(
     chunks_data: dict,
     manifest: dict | None = None,
     timeout: int = 240,
+    output_dir: Path | None = None,
 ) -> dict:
-    requirements_dir = task_dir / "requirements"
+    requirements_dir = output_dir if output_dir is not None else task_dir / "requirements"
     requirements_dir.mkdir(parents=True, exist_ok=True)
     chunks_path = requirements_dir / "chunks.json"
     chunks_path.write_text(
@@ -423,16 +427,11 @@ def _run_script(
     if not script.exists():
         raise SplitRunError(f"缺少拆分脚本：{script}")
     try:
-        completed = subprocess.run(
-            [sys.executable, str(script), *[str(item) for item in args]],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            cwd=str(SCRIPTS_DIR),
-        )
+        completed = _execute_script([sys.executable, str(script), *[str(item) for item in args]], timeout)
     except subprocess.TimeoutExpired as exc:
+        _retain_stage(name, {'script': name, 'timeout': timeout,
+            'stdout': (exc.stdout or b'').decode('utf-8', errors='replace') if isinstance(exc.stdout, bytes) else exc.stdout,
+            'stderr': (exc.stderr or b'').decode('utf-8', errors='replace') if isinstance(exc.stderr, bytes) else exc.stderr})
         raise SplitRunError(f"{name} 超时（>{timeout}s）") from exc
     entry = {
         "script": name,
@@ -441,10 +440,56 @@ def _run_script(
         "stderr": completed.stderr,
     }
     report.append(entry)
+    _retain_stage(name, entry)
     if fatal and completed.returncode != 0:
         detail = _short_error(completed.stdout + completed.stderr)
         raise SplitRunError(f"{name} 执行失败：{detail}")
     return entry
+
+
+def _retain_stage(name: str, entry: dict) -> None:
+    """Keep original in-place script outputs at every boundary, including failure."""
+    from ..tasks import CURRENT
+    job = CURRENT.get()
+    if job is None:
+        return
+    run_dir = job['directory']
+    snapshot = run_dir / 'intermediate' / 'stages' / f'{name}-{uuid.uuid4().hex}'
+    snapshot.mkdir(parents=True)
+    (snapshot / 'execution.json').write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding='utf-8')
+    if (run_dir / 'final').exists():
+        shutil.copytree(run_dir / 'final', snapshot / 'final')
+
+
+def _execute_script(argv: list[str], timeout: int):
+    """Same script and argv; let cancellation stop only this task's owned child."""
+    from ..tasks import CURRENT
+    job = CURRENT.get()
+    cancelled = job.get('cancel_requested') if job else None
+    if cancelled and cancelled.is_set():
+        raise SplitRunError('DSH 已取消任务')
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding='utf-8', errors='replace', cwd=str(SCRIPTS_DIR),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0) as process:
+        deadline = time.monotonic() + timeout
+        while True:
+            stopping = cancelled is not None and cancelled.is_set()
+            timed_out = time.monotonic() >= deadline
+            if stopping or timed_out:
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                if timed_out:
+                    raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
+                return subprocess.CompletedProcess(argv, 130, stdout, stderr + '\nDSH 已取消任务')
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.1, max(0.001, deadline-time.monotonic())))
+                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 def _short_error(output: str, limit: int = 1200) -> str:

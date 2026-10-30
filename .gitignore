@@ -45,5 +45,16 @@ outputs/
 !.vscode/settings.json
 !.vscode/extensions.json
 
-[Tt][Ee][Ss][Tt][Ss]
+# ---------- 本地 Agent / Skill 指引（不随项目提交）----------
+skills/
+.agents/
+.codex/
+.claude/
+SKILL.md
 AGENTS.md
+CLAUDE.md
+
+# ---------- 构建时生成的副本 / 链接 ----------
+.legacy-node-modules/
+harness/server/
+harness/vendor/runtime-sdk/

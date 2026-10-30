@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 
 
 class ConfigError(RuntimeError):
@@ -44,17 +43,6 @@ def _get_float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Settings:
-    api_key: str
-    base_url: str
-    model: str
-    host: str
-    port: int
-    workers: int
-    log_level: str
-    llm_timeout: float
-    llm_max_retries: int
-    graceful_timeout: int
-    output_dir: str
     max_source_mb: int
     split_max_chars: int
     ocr_enabled: bool
@@ -75,22 +63,8 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """解析并缓存配置 允许api_key为空 由启动期校验强制要求。"""
+    """Only conversion/OCR tuning; DSH owns output locations and language models."""
     return Settings(
-        api_key=os.environ.get("DEEPSEEK_API_KEY", "").strip(),
-        base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
-        model=os.environ.get("XAGENTS_MODEL", "deepseek-chat"),
-        host=os.environ.get("XAGENTS_HOST", "127.0.0.1"),
-        port=_get_int("XAGENTS_PORT", 8077),
-        workers=_get_int("XAGENTS_WORKERS", 1),
-        log_level=os.environ.get("XAGENTS_LOG_LEVEL", "info").lower(),
-        llm_timeout=_get_float("XAGENTS_LLM_TIMEOUT", 120.0),
-        llm_max_retries=_get_int("XAGENTS_LLM_MAX_RETRIES", 2),
-        graceful_timeout=_get_int("XAGENTS_GRACEFUL_TIMEOUT", 30),
-        output_dir=os.environ.get(
-            "XAGENTS_OUTPUT_DIR",
-            str(Path(__file__).resolve().parents[2] / "outputs"),
-        ),
         max_source_mb=_get_int("XAGENTS_MAX_SOURCE_MB", 200),
         split_max_chars=_get_int("XAGENTS_SPLIT_MAX_CHARS", 120000),
         ocr_enabled=_get_bool("XAGENTS_OCR_ENABLED", True),
@@ -108,11 +82,3 @@ def get_settings() -> Settings:
         task_concurrency=_get_int("XAGENTS_TASK_CONCURRENCY", 2),
         task_max_jobs=_get_int("XAGENTS_TASK_MAX_JOBS", 100),
     )
-
-
-def require_api_key(settings: Settings | None = None) -> str:
-    """返回模型凭据 缺失时抛错"""
-    settings = settings or get_settings()
-    if not settings.api_key:
-        raise ConfigError("DEEPSEEK_API_KEY 未设置：必须提供模型凭据")
-    return settings.api_key
