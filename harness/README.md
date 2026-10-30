@@ -149,11 +149,14 @@ pnpm.cmd dsh web
 
 ## 交付文件
 
-| 文件（相对任务的 `final/` 目录） | 内容 |
+页面“最终产物”提供 **两个主要下载项**：
+
+| 下载项 | 内容 |
 |---|---|
 | `requirements.zip` | 最终结果整包，包含需求目录、Markdown、图片、报告及结构化结果，保留图片相对引用 |
-| `requirements/final.md` | 汇总 Markdown，可单独下载 |
-| `result.json` | 结构化处理结果 |
+| `final.md` | 汇总 Markdown，可单独下载；任务目录中的位置为 `final/requirements/final.md` |
+
+ZIP 内包含 `requirements/` 需求目录和 `result.json` 结构化处理结果。`result.json` 不作为第三个主要下载项展示，下载 ZIP 后解压即可查看。
 
 文件保存在发起聊天所属工作区：
 
@@ -161,7 +164,7 @@ pnpm.cmd dsh web
 <工作区>/outputs/runs/<runId>/
 ```
 
-最终文件位于 `final/`，转换结果、图片、模型往返及快照保存在 `intermediate/`、`snapshots/` 等目录。ZIP 只打包最终结果；失败或取消后保留已有材料，不自动删除。主要下载项为 ZIP 和汇总 Markdown，其余已登记文件从任务的 `artifacts` 查询。
+最终文件位于 `final/`，转换结果、图片、模型往返及快照保存在 `intermediate/`、`snapshots/` 等目录。ZIP 只打包最终结果；失败或取消后保留已有材料，不自动删除。其他已登记文件可从任务的 `artifacts` 查询。
 
 ## 常见问题
 
