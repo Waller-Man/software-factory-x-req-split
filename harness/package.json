@@ -1,6 +1,6 @@
 {
   "name": "x-dsh",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "x-req-split — 软件工厂 Run 需求文档拆分后端",
@@ -10,22 +10,27 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
+    "./client": "./client.js",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "server/src", "server/requirements.txt", "scripts/prepare-python.mjs", "cordis.patch.yml", "locale", "icon.svg", "README.md", "THIRD_PARTY_NOTICES.md"],
-  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}},
+  "files": ["lib", "server/src", "server/requirements.txt", "scripts/prepare-python.mjs", "cordis.patch.yml", "locale", "icon.svg", "client.js", "README.md", "THIRD_PARTY_NOTICES.md"],
+  "dsh": {
+    "bundle": {"patch": "./cordis.patch.yml"},
+    "client": {"platform":"web","immediately":true,"inject":["@deepseek-ai/dsh-client-locale","@deepseek-ai/dsh-client-ui-settings","@deepseek-ai/dsh-client-ui-plugin-manager"]}
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --experimental-transform-types --test checks/*.test.ts",
     "prepare:python": "node scripts/prepare-python.mjs"
   },
-  "devDependencies": {"@software-factory/runtime-sdk": "file:vendor/software-factory-runtime-sdk-0.1.0.tgz"},
+  "devDependencies": {"@software-factory/runtime-sdk": "file:vendor/software-factory-runtime-sdk-0.3.0.tgz"},
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-alpha.2"
+    "@deepseek-ai/dsh-subprocess": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-settings": "0.2.1-alpha.2"
   },
   "engines": {"node": ">=24"}
 }

@@ -5,10 +5,11 @@ import {randomUUID,randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {SplitError} from './contracts.ts';
+import type {Options} from './config.ts';
 
 // Packaged server payload lives next to lib; no dependency on the process cwd.
 export const serverDirectory=fileURLToPath(new URL('../server/',import.meta.url));
-export interface BackendOptions {pythonPath:string;port:number;startupTimeoutMs:number;graceMs:number;ocrEnabled:boolean}
+export type BackendOptions=Omit<Options,'modelOutput'>;
 /** One owned HTTP service, allocated by the host provider. Never adopts a listener or kills a PID. */
 export class Backend {
   private handle?:SubprocessHandle;
@@ -16,6 +17,7 @@ export class Backend {
   private readonly token=randomBytes(32).toString('hex');
   private readonly instance=randomUUID();
   private baseUrl='';private exited=false;
+  private stopping?:Promise<void>;
   constructor(private readonly ctx:Context,private readonly options:BackendOptions){}
   async start():Promise<void>{
     if(this.handle)throw new SplitError('ALREADY_STARTED','Backend already started');
@@ -23,7 +25,10 @@ export class Backend {
     const python=await this.ctx.subprocess.resolveExecutable(command,{},this.lifetime.signal);
     const env:NodeJS.ProcessEnv={PYTHONUNBUFFERED:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1',PYTHONPATH:undefined,
       X_REQ_SPLIT_TOKEN:this.token,X_REQ_SPLIT_INSTANCE:this.instance,XAGENTS_PORT:String(this.options.port),XAGENTS_HOST:'127.0.0.1',XAGENTS_WORKERS:'1',
-      XAGENTS_OCR_ENABLED:String(this.options.ocrEnabled),XAGENTS_OCR_PROVIDER:'rapidocr',XAGENTS_OCR_BASE_URL:'',XAGENTS_OCR_MODEL:'',XAGENTS_OCR_API_KEY:undefined};
+      XAGENTS_OCR_ENABLED:String(this.options.ocrEnabled),XAGENTS_OCR_PROVIDER:'rapidocr',XAGENTS_OCR_BASE_URL:'',XAGENTS_OCR_MODEL:'',XAGENTS_OCR_API_KEY:undefined,
+      XAGENTS_MAX_SOURCE_MB:String(this.options.maxSourceMb),XAGENTS_SPLIT_MAX_CHARS:String(this.options.splitMaxChars),
+      XAGENTS_OCR_DPI:String(this.options.ocrDpi),XAGENTS_OCR_MAX_PAGES:String(this.options.ocrMaxPages),
+      XAGENTS_OCR_TIMEOUT:String(this.options.ocrTimeout),XAGENTS_OCR_MAX_RETRIES:String(this.options.ocrMaxRetries),XAGENTS_OCR_MIN_CONFIDENCE:String(this.options.ocrMinConfidence)};
     this.handle=this.ctx.subprocess.spawn({argv:[python,'-B','-u','-m','src'],cwd:serverDirectory,env,graceMs:this.options.graceMs,signal:this.lifetime.signal,stdio:{stdin:'ignore',stdout:'pipe',stderr:'pipe'}});
     const handle=this.handle;let diagnostic='';
     const exited=handle.done.then(outcome=>{this.exited=true;throw new SplitError('BACKEND_EXIT',`Python 后端退出 (${outcome.exitCode})。可能端口冲突或依赖缺失：${diagnostic}`);},error=>{this.exited=true;throw error;});void exited.catch(()=>{});
@@ -54,9 +59,9 @@ export class Backend {
     const response=await fetch(this.baseUrl+path,{method:body===undefined?'GET':'POST',headers:{authorization:`Bearer ${this.token}`,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.any([this.lifetime.signal,signal??AbortSignal.timeout(30000)])});
     if(!response.ok)throw new Error(`Backend HTTP ${response.status}: ${await response.text()}`);return response.json();
   }
-  async stop(){
+  stop():Promise<void>{return this.stopping??=(async()=>{
     this.lifetime.abort();const handle=this.handle;if(!handle)return;
     handle.terminate();await handle.done.catch(()=>{});
     if(!await handle.waitForExit(AbortSignal.timeout(this.options.graceMs*2)))throw new SplitError('PROCESS_CLEANUP','DSH 无法确认本插件的后端进程组已退出。');
-  }
+  })();}
 }

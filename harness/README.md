@@ -4,7 +4,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 插件版本 | 0.3.0 |
+| 插件版本 | 0.4.1 |
 | 包名 / 插件条目 | `x-dsh` / `x-req-split` |
 | 业务入口 | `split_requirement_document` |
 | 输入 | PDF、DOCX、XLSX、XLSM 或需求文本 |
@@ -16,7 +16,7 @@
 | --- | --- |
 | DSH | `0.2.1-alpha.2`，提供 Tool 和子进程管理服务 |
 | Cordis / Node.js | `4.0.5-alpha.1` / Node.js 24+ |
-| 软件工厂 Runtime | `0.1.0`，先安装并启用，提供 `sfRuntime` 服务 |
+| 软件工厂 Runtime | `0.3.0`，先安装并启用，提供任务与模型网关服务；SDK 0.3.0 已随插件打包 |
 | Python | 建议 3.12，需可用的 venv 和 pip |
 | 文档依赖 | PyMuPDF、pymupdf4llm、python-docx、openpyxl、Pillow |
 | 后端与 OCR | FastAPI、uvicorn、httpx、rapidocr-onnxruntime；详见 `server/requirements.txt` |
@@ -38,7 +38,7 @@ D:\DSH-plugins\x-dsh\
 
 两个目录无需相邻。每个安装目录应直接包含 `package.json` 和 `cordis.patch.yml`；多了一层文件夹时进入内层。本插件目录还应有 `lib/`、`scripts/prepare-python.mjs`、`server/src/` 和 `server/requirements.txt`。
 
-本插件交付包为 `x-dsh-0.3.0.zip` 或 `x-dsh-0.3.0.tgz`，使用 TGZ 时同样先解压。新电脑使用预编译包无需构建 TypeScript 或单独安装 SDK；**发布包不含 Python 环境，需要完成下一步**。尚未发布 Release 时，请联系维护者获取完整发布包。
+本插件交付包为 `x-dsh-0.4.1.zip` 或 `x-dsh-0.4.1.tgz`，使用 TGZ 时同样先解压。新电脑使用预编译包无需构建 TypeScript 或单独安装 SDK；**发布包不含 Python 环境，需要完成下一步**。尚未发布 Release 时，请联系维护者获取完整发布包。
 
 ### 2. 准备 Python 环境
 
@@ -86,7 +86,11 @@ node scripts/prepare-python.mjs
 
 浏览器与 DSH 在两台电脑上时，安装路径指 **DSH 所在电脑**的目录，浏览器不会上传本机目录。安装器仍可能解析包依赖，不承诺完全离线安装。
 
-按上述步骤准备环境后，`pythonPath` 留空，端口等配置保持默认即可。仅在使用外部虚拟环境时，在 DSH 插件原生配置中将 `pythonPath` 改为该环境解释器的绝对路径。无需手改 YAML 或填写 Tool 允许名单。
+按上述步骤准备环境后，`pythonPath` 留空即可。在 DSH 插件管理中打开“需求文档拆分”包的详情页，配置表单直接显示在外层，无需进入“包含的组件”。可填写 Python 路径、切换本地 OCR、选择模型输出模式；“高级处理设置”提供文档大小、拆分长度、OCR 页数/DPI/超时和后端端口等参数。修改后点击“保存配置”，无需手改 YAML、填写 `.env` 或 Tool 允许名单。
+
+无修改时保存按钮禁用，加载、校验、保存成功及失败会显示提示。保存后无需重启，新任务读取新设置，运行中任务保留启动时的配置；Python/OCR 参数变化时，新任务使用新后端，旧任务结束后清理旧实例。建议端口保持 `0` 自动分配。表单不负责安装 Python 依赖，安装准备仍执行上面的脚本。
+
+初次 Python 启动失败时，配置页仍可填写：修正解释器路径等设置并保存后，会自动重试准备。具体启动错误查看 DSH 日志，健康和就绪检查通过前不会开放业务工具；插件条目启用不等于后端已就绪。
 
 ### 4. 日常启动
 
@@ -134,6 +138,10 @@ pnpm.cmd dsh web
 
 默认使用发起聊天的模型。如需单独指定，在启动参数顶层增加 `"model": {"provider":"实际提供方ID","model":"实际模型ID"}`。模型必须已在 DSH 中配置；任务启动后固定使用该模型，主聊天模型不会被切换。
 
+插件配置页的“模型输出模式”默认为**兼容模式**，沿用原提示词及 Python JSON 解析。如需协议级 JSON 对象约束，选择 **JSON Chat** 或 **JSON Responses**：TypeScript 通过 Runtime 0.3.0 网关分别发送 `response_format: {type: "json_object"}` 或 `text.format: {type: "json_object"}`，模型调用记录及用量仍由 Run 保存，凭证不传给 Python。
+
+JSON 模式要求所选 DSH 模型连接使用对应协议，并支持 JSON 输出。网关不转换协议、不回退模型；当前 `deepseek-official` 为 Messages 连接，应使用兼容模式，或由用户在 Run 中明确选择匹配的连接。只启用当前连接支持的功能，不能把网关转发成功当成模型一定支持 JSON Schema。`mode: convert` 不调用模型，不受该模式限制。
+
 ### 查看结果或取消任务
 
 将下面的 ID 替换为任务返回的实际值：
@@ -174,9 +182,12 @@ ZIP 内包含 `requirements/` 需求目录和 `result.json` 结构化处理结�
 | Python 不存在或缺依赖 | 在实际插件目录重跑准备脚本；使用外部环境时核对 `pythonPath` |
 | `BACKEND_START_FAILED` | 查看错误中的 Python 日志，检查依赖及端口；通常保持 `port: 0` |
 | `MODEL_REQUIRED` / `MODEL_UNAVAILABLE` | 检查 DSH 模型配置及模型 ID，或先用 `mode: convert` 验证 |
+| JSON 模式协议不匹配 | 选择对应 Chat/Responses 的 DSH 连接，或在插件配置页改回兼容模式，不自动切换模型 |
+| `RUNTIME_UPGRADE_REQUIRED` / `MODEL_GATEWAY_UNAVAILABLE` | 使用 Runtime 0.3.0，并启用 DSH 网页、设置和凭据服务 |
 | `SOURCE_PATH` / `INVALID_INPUT` | 使用服务端当前工作区内的文档绝对路径；`path` 和非空 `text` 二选一 |
 | 工作区或目录写入失败 | 选择可写工作区，检查 DSH 服务账户的现有权限 |
 | 更新后仍执行旧代码 | 按插件管理器提示完整重启原 DSH 服务；仅刷新网页或切换启用开关可能不足 |
+| 已启用但配置页没有输入框 | 确认使用同一完整发布包中的 `client.js` 和 `lib/index.js`；源码目录修改后须重新构建，版本号更新不代表后端已更新 |
 
 ## 从源码构建
 
@@ -196,6 +207,6 @@ npm.cmd pack --pack-destination ../dist
 
 未设置 `DSH_SOURCE` 时默认寻找相邻的 `DSH-Softwarefactory`。SDK 原 TGZ 已保存在 `harness/vendor/`；无需用通用 `npm install` 代替上述构建流程。Linux 使用 `export DSH_SOURCE=/实际/DSH源码路径`、相同的 Node 命令、`mkdir -p dist` 和 `npm pack`。
 
-构建成功会输出 `Built Run backend plugin and copied original Python algorithms.`，生成 `harness/lib/index.js`、`harness/server/` 等运行文件；打包成功生成 `dist/x-dsh-0.3.0.tgz`，不会自动生成 ZIP。
+构建成功会输出 `Built Run backend plugin and copied original Python algorithms.`，生成 `harness/lib/index.js`、`harness/server/` 等运行文件，原生配置页随 `client.js` 分发；打包成功生成 `dist/x-dsh-0.4.1.tgz`，不会自动生成 ZIP。
 
 可以直接将构建后的 **`harness/` 目录**作为前述插件安装目录，也可以解压 TGZ 后使用其中包含 `package.json` 的目录。随后按“新环境快速安装”准备该目录的 Python 环境并安装；构建和打包不会创建 venv 或安装 Runtime。更新已安装的源码目录前，应结束任务并停用插件。

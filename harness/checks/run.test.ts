@@ -6,7 +6,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {createServer} from 'node:http';
 import {Context} from '@deepseek-ai/cordis';
+import WebServer from '@deepseek-ai/dsh-host-webserver';
 import Registry from '@deepseek-ai/dsh-typert-registry';
 import {mountAgentLoopTestDependencies,mountAgentLoopTestHarness} from '@deepseek-ai/dsh-agent-loop-testkit';
 import LocalSubprocess from '@deepseek-ai/dsh-subprocess-local';
@@ -95,4 +97,59 @@ test('Run bridge: pure conversion delivery, SDK model failure and cooperative ca
     assert.equal(model.seen.length,2,'Never run the complete split pipeline');
   });
   await plugin.dispose();assert.equal(ctx.tools.get('split_requirement_document'),undefined);
+});
+
+test('real Run 0.3 gateway forwards JSON formats and records usage without exposing credentials',{timeout:30000},async t=>{
+  const received:any[]=[],key='synthetic-upstream-credential';
+  const upstream=createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;
+    received.push({body:JSON.parse(raw),authorization:req.headers.authorization});
+    res.setHeader('content-type','application/json');
+    // Deliberately stop at the original Python JSON parser instead of running the split pipeline.
+    res.end(JSON.stringify(req.url?.endsWith('/responses')?{output:[{content:[{type:'output_text',text:'synthetic invalid JSON'}]}],usage:{input_tokens:3,output_tokens:2}}:
+      {choices:[{message:{content:'synthetic invalid JSON'}}],usage:{prompt_tokens:3,completion_tokens:2}}));
+  });
+  await new Promise<void>(resolve=>upstream.listen(0,'127.0.0.1',resolve));
+  t.after(()=>{upstream.closeAllConnections();return new Promise<void>(resolve=>upstream.close(()=>resolve()));});
+  const workspace=await realpath(await mkdtemp(join(tmpdir(),'req-json-gateway-'))),ctx=new Context();
+  t.after(async()=>{await ctx.fiber.dispose();await rm(workspace,{recursive:true,force:true});});
+  await mountAgentLoopTestDependencies(ctx,{workingDirectory:true});
+  const harness=await mountAgentLoopTestHarness(ctx),agent=await harness.create(SessionId('json-owner-'+randomUUID()),{},{cwd:workspace});
+  await ctx.plugin(Registry);await ctx.plugin(LocalSubprocess);
+  const protocols=['openai-completions','openai-responses'] as const;
+  const profiles=Object.fromEntries(protocols.map(protocol=>[protocol,{api:protocol,baseURL:`http://127.0.0.1:${(upstream.address() as any).port}/v1`,models:[{id:'fixed-b'}]}]));
+  ctx.provide('settings',{configure:()=>()=>{},describe:()=>[{ns:'synthetic-connections',value:{providers:profiles}}]} as never);
+  ctx.provide('credentials',{resolve:async()=>({value:key}),readRecord:async()=>({kind:'api-key',key})} as never);
+  await ctx.plugin(WebServer,{host:'127.0.0.1',port:0,compression:'none'});
+  class HttpModel extends LlmAdapter{
+    async listModels(provider:string){return [{provider,id:'fixed-b',name:'Synthetic HTTP model'}];}
+    async *stream(_options:GenerateOptions):AsyncIterable<StreamChunk>{assert.fail('JSON mode must use the Runtime gateway');}
+  }
+  ctx.llm.registerAdapter([...protocols],new HttpModel());
+  ctx.llm.registerConfigurableProviders(protocols.map(provider=>({provider,displayName:provider,settingsNs:'synthetic-connections',settingsPath:['providers',provider]})));
+  await ctx.plugin(Runtime,{defaultTimeoutMs:20000});
+  async function call(action:string,args:object){
+    const result=await ctx.tools.execute({name:'sf_runtime_'+action,arguments:args,agent,callId:ToolCallId(randomUUID()),signal:AbortSignal.timeout(25000)});
+    const body=result.value as any;assert.equal(body.ok,true,JSON.stringify(body));return body.data;
+  }
+  for(const protocol of protocols){
+    const plugin=await ctx.plugin(Plugin,{pythonPath:python,ocrEnabled:false,modelOutput:protocol==='openai-completions'?'json-chat':'json-responses'});
+    try{
+      const accepted=await call('run_tool',{toolId:'split_requirement_document',input:{text:'# 订单\n小材料'},model:{provider:protocol,model:'fixed-b'}});
+      let run:any;
+      for(let n=0;n<80;n++){run=await call('get_run',{runId:accepted.runId});if(['completed','failed'].includes(run.status))break;await new Promise(resolve=>setTimeout(resolve,100));}
+      assert.equal(run.status,'failed','Synthetic invalid JSON must retain the original parsing failure');
+      assert.equal(run.modelCalls.length,1);assert.equal(run.modelCalls[0].protocol,protocol);
+      const callId=run.modelCalls[0].requestId;
+      const record=await readFile(join(workspace,'outputs/runs',run.runId,'logs/model-calls',callId+'.json'),'utf8');
+      assert.ok(!record.includes(key));assert.ok(!record.includes('sf-run-'));
+      assert.ok(JSON.parse(record).usage);
+      const request=received.at(-1);assert.equal(request.authorization,`Bearer ${key}`);assert.equal(request.body.model,'fixed-b');
+      if(protocol==='openai-completions')assert.deepEqual(request.body.response_format,{type:'json_object'});
+      else assert.deepEqual(request.body.text,{format:{type:'json_object'}});
+      const saved=await readFile(join(workspace,'outputs/runs',run.runId,'intermediate/model-0001-request.json'),'utf8');
+      assert.ok(!saved.includes(key));assert.ok(!saved.includes('sf-run-'));
+    }finally{await plugin.dispose();}
+  }
+  assert.equal(received.length,2);
 });

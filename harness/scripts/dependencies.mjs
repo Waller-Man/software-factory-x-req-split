@@ -30,7 +30,7 @@ export async function prepareDependencies() {
   }
   for (const [name, dir] of [['cordis', 'cordis'], ['schemastery', 'schemastery'], ['cordis-plugin-loader', 'loader'], ['cordis-plugin-include', 'include'], ['cordis-plugin-timer', 'timer']]) await link(`@deepseek-ai/${name}`, join(host, 'vendor', dir));
   const sdk=join(root,'vendor/runtime-sdk');await mkdir(sdk,{recursive:true});
-  const unpack=spawnSync('tar',['-xf',join(root,'vendor/software-factory-runtime-sdk-0.1.0.tgz'),'-C',sdk,'--strip-components=1'],{stdio:'inherit',windowsHide:true});
+  const unpack=spawnSync('tar',['-xf',join(root,'vendor/software-factory-runtime-sdk-0.3.0.tgz'),'-C',sdk,'--strip-components=1'],{stdio:'inherit',windowsHide:true});
   if(unpack.error)throw unpack.error;
   if(unpack.status!==0)throw new Error('Cannot unpack the supplied Runtime SDK');
   await link('@software-factory/runtime-sdk',sdk);

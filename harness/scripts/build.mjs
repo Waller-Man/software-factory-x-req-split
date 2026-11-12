@@ -1,4 +1,4 @@
-/** Host-only build. SDK is bundled from the supplied distribution; no Client module. */
+/** Bundle the Host and SDK; the small native settings Client is shipped as authored. */
 import {cp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';

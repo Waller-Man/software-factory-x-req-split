@@ -4,6 +4,8 @@ import {createHash} from 'node:crypto';
 import type {Artifact,BusinessResult,ExecutionContext,ModelMessage} from '@software-factory/runtime-sdk';
 import {serverDirectory} from './backend.ts';
 import {SplitError} from './contracts.ts';
+import {pluginVersion,type Options} from './config.ts';
+import {modelCaller} from './model.ts';
 
 export interface Input {path?:string;text?:string;title?:string;mode?:'split'|'convert'}
 export interface BackendClient {request(path:string,body?:unknown,signal?:AbortSignal):Promise<unknown>}
@@ -15,7 +17,7 @@ interface Job {
 const inside=(root:string,path:string)=>{const rel=relative(root,path);return rel===''||(!rel.startsWith('..'+sep)&&rel!=='..'&&!isAbsolute(rel));};
 const json=(path:string,value:unknown)=>writeFile(path,JSON.stringify(value,null,2)+'\n',{mode:0o600});
 
-/** SDK 0.1.0 exposes outputDirectory, not workspaceRoot. Follow its verified outputs/runs layout. */
+/** SDK exposes outputDirectory, not workspaceRoot. Follow its verified outputs/runs layout. */
 async function taskDirectory(execution:ExecutionContext){
   const dir=await realpath(execution.outputDirectory);
   if(dir!==resolve(execution.outputDirectory)||basename(dir)!==execution.runId||basename(dirname(dir))!=='runs'||basename(dirname(dirname(dir)))!=='outputs'){
@@ -58,8 +60,9 @@ async function retainPythonLog(dir:string){
   await copyFile(join(dir,'logs','python.log'),join(dir,'intermediate','python.log')).catch(error=>{if(error.code!=='ENOENT')throw error;});
 }
 
-export async function runBusiness(backend:BackendClient,input:Readonly<Input>,execution:ExecutionContext):Promise<BusinessResult>{
+export async function runBusiness(backend:BackendClient,input:Readonly<Input>,execution:ExecutionContext,options:Readonly<Options>):Promise<BusinessResult>{
   execution.signal.throwIfAborted();
+  const callModel=modelCaller(execution,options.modelOutput);
   const {dir,workspace}=await taskDirectory(execution),known=new Map<string,Artifact>();
   let submission:Promise<unknown>|undefined,cleanup:Promise<void>|undefined,eventIndex=0;
   const stop=()=>cleanup??=(async()=>{
@@ -78,11 +81,11 @@ export async function runBusiness(backend:BackendClient,input:Readonly<Input>,ex
       const source=await realpath(input.path),info=await stat(source);
       if(!inside(workspace,source))throw new SplitError('SOURCE_PATH','输入文件不在本次 Run 所属工作区。');
       if(!info.isFile()||!['.pdf','.docx','.xlsx','.xlsm'].includes(extname(source).toLowerCase()))throw new SplitError('SOURCE_FORMAT','仅支持 PDF、DOCX、XLSX、XLSM。');
-      if(info.size>200*1024*1024)throw new SplitError('SOURCE_SIZE','文档超过 200MB。');
+      if(info.size>options.maxSourceMb*1024*1024)throw new SplitError('SOURCE_SIZE',`文档超过 ${options.maxSourceMb}MB。`);
       await copyFile(source,join(dir,'input',basename(source)));payload={...payload,path:source};
     }
     if(input.text)await writeFile(join(dir,'input','material.txt'),input.text,{mode:0o600});
-    await json(join(dir,'intermediate','provenance.json'),{runId:execution.runId,plugin:'x-dsh',version:'0.3.0',pythonSourceSha256:await sourceHash(),model:execution.model.selection??null,mode,source:payload.path??'input/material.txt'});
+    await json(join(dir,'intermediate','provenance.json'),{runId:execution.runId,plugin:'x-dsh',version:pluginVersion,pythonSourceSha256:await sourceHash(),model:execution.model.selection??null,settings:options,mode,source:payload.path??'input/material.txt'});
     await execution.log(`开始${mode==='convert'?'文档转换':'需求拆分'}，任务 ${execution.runId}`,'prepare');
     await execution.reportProgress({stage:'prepare',stageName:'准备输入',progress:0});
     submission=backend.request('/tasks',{runId:execution.runId,runDirectory:dir,input:payload},AbortSignal.timeout(30000));
@@ -103,9 +106,9 @@ export async function runBusiness(backend:BackendClient,input:Readonly<Input>,ex
         if(handled.has(request.id))continue;handled.add(request.id);
         await artifacts(execution,known,['intermediate','snapshots']);
         const prefix=join(dir,'intermediate',`model-${String(handled.size).padStart(4,'0')}`);
-        await json(prefix+'-request.json',request);
+        await json(prefix+'-request.json',{...request,modelOutput:options.modelOutput});
         let answer;
-        try{answer=await execution.model.call({messages:request.messages});}
+        try{answer=await callModel(request.messages);}
         catch(error){await json(prefix+'-error.json',{id:request.id,error:String(error)});throw error;}
         await json(prefix+'-response.json',{id:request.id,model:execution.model.selection??null,...answer});
         await backend.request(`/tasks/${execution.runId}/model/${request.id}`,{text:answer.text},execution.signal);
